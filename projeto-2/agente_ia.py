@@ -17,12 +17,16 @@ OBSTACLES = [
 
 ACTIONS = [(0, -1), (0, 1), (-1, 0), (1, 0)]  # cima, baixo, esquerda, direita
 
+portal = (7, 0)  # Ponto de teletransporte
+return_portal = (1, 7)  # Ponto de retorno
+
 # Parâmetros do Q-Learning
 ALPHA = 0.1
 GAMMA = 0.9
 EPSILON = 0.2
-EPISODES = 300
+EPISODES = 100
 MAX_STEPS = 100
+BETA = 5
 
 # Cores
 WHITE = (255, 255, 255)
@@ -32,6 +36,7 @@ BLUE = (50, 50, 255)
 GREEN = (0, 255, 0)
 RED = (255, 0, 0)
 ORANGE = (255, 165, 0)
+YELLOW = (255, 255, 0)
 
 # Q-table
 q_table = np.zeros((GRID_SIZE, GRID_SIZE, len(ACTIONS)))
@@ -39,20 +44,36 @@ q_table = np.zeros((GRID_SIZE, GRID_SIZE, len(ACTIONS)))
 # Funções auxiliares
 def is_valid(pos):
     x, y = pos
-    return 0 <= x < GRID_SIZE and 0 <= y < GRID_SIZE and pos not in OBSTACLES
+    return 0 <= x < GRID_SIZE and 0 <= y < GRID_SIZE
 
 def get_next_state(state, action):
     dx, dy = ACTIONS[action]
     next_state = (state[0] + dx, state[1] + dy)
-    return next_state if is_valid(next_state) else state
+    if next_state == portal:
+        return return_portal
+    elif is_valid(next_state):
+        return next_state
+    else:
+        return state
 
 def get_reward(state):
     if state == GOAL:
         return 100
+    elif state == return_portal:
+        return  50
     elif state in OBSTACLES:
         return -10
     else:
         return -1
+    
+def potential(state):
+    return - (abs(state[0] - GOAL[0]) + abs(state[1] - GOAL[1]))
+
+def get_shaped_reward(state, next_state, visits):
+    base_reward = get_reward(next_state)
+    shaping = GAMMA * potential(next_state) - potential(state)
+    revisit_penalty = - BETA * visits[next_state[0], next_state[1]] if visits[next_state[0], next_state[1]] > 0 else 0
+    return base_reward + shaping + revisit_penalty
 
 def draw_grid(screen):
     for x in range(GRID_SIZE):
@@ -65,12 +86,26 @@ def draw_grid(screen):
                 color = GREEN
             elif (x, y) == GOAL:
                 color = RED
+            elif (x, y) == portal:
+                color = YELLOW
+            elif (x, y) == return_portal:
+                color = YELLOW
             pygame.draw.rect(screen, color, rect)
             pygame.draw.rect(screen, GREY, rect, 1)
 
 def draw_agent(screen, pos, color=BLUE):
     rect = pygame.Rect(pos[0] * CELL_SIZE + 10, pos[1] * CELL_SIZE + 10, CELL_SIZE - 20, CELL_SIZE - 20)
     pygame.draw.ellipse(screen, color, rect)
+
+def reward_function(state):
+    if state == GOAL:
+        return 100
+    elif state == return_portal:
+        return 50
+    elif state in OBSTACLES:
+        return -10
+    
+    return reward_function(state)
 
 def process_events():
     for event in pygame.event.get():
@@ -89,6 +124,9 @@ clock = pygame.time.Clock()
 for episode in range(EPISODES):
     print(f"Treinando episódio {episode + 1}/{EPISODES}")
     state = START
+    visits = np.zeros((GRID_SIZE, GRID_SIZE), dtype=int)
+    visits[state[0], state[1]] += 1
+
     for step in range(MAX_STEPS):
         process_events()
 
@@ -98,15 +136,14 @@ for episode in range(EPISODES):
             action = np.argmax(q_table[state[0], state[1]])
 
         next_state = get_next_state(state, action)
-        reward = get_reward(next_state)
+        reward = get_shaped_reward(state, next_state, visits)
 
         old_value = q_table[state[0], state[1], action]
         next_max = np.max(q_table[next_state[0], next_state[1]])
-        sec_arg = (reward + GAMMA * next_max - old_value)
-        first_arg = old_value + ALPHA
-        q_table[state[0], state[1], action] =  first_arg * sec_arg
+        q_table[state[0], state[1], action] = old_value + ALPHA * (reward + GAMMA * next_max - old_value)
 
         state = next_state
+        visits[state[0], state[1]] += 1
 
         # Visualização do treinamento
         screen.fill(WHITE)
@@ -117,10 +154,6 @@ for episode in range(EPISODES):
 
         if state == GOAL:
             break
-
-print("Treinamento concluído!")
-time.sleep(1)
-pygame.display.quit()
 
 # -----------------------------
 # EXECUÇÃO DO AGENTE TREINADO
